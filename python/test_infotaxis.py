@@ -1,0 +1,21 @@
+from tests.test_infotaxis import test_get_p_src_found_returns_correct_probabilities_for_examples
+from tests.test_infotaxis import test_get_p_sample_works_qualitatively_for_examples
+
+test_get_p_src_found_returns_correct_probabilities_for_examples()
+test_get_p_sample_works_qualitatively_for_examples()
+
+get_ipython().magic('matplotlib inline')
+from tests.test_infotaxis import show_hit_rate_map_for_example_parameters
+
+show_hit_rate_map_for_example_parameters()
+
+get_ipython().magic('matplotlib inline')
+from tests.test_infotaxis import show_update_log_p_src_gives_correct_qualitative_behavior_for_examples
+
+show_update_log_p_src_gives_correct_qualitative_behavior_for_examples()
+
+get_ipython().magic('matplotlib inline')
+from tests.test_infotaxis import show_infotaxis_demo
+
+show_infotaxis_demo()
+

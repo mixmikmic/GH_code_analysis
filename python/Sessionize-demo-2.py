@@ -1,0 +1,15 @@
+get_ipython().magic('load_ext sql')
+
+# %sql postgresql://gpdbchina@10.194.10.68:55000/madlib
+get_ipython().magic('sql postgresql://fmcquillan@localhost:5432/madlib')
+
+get_ipython().magic('sql select madlib.version();')
+
+get_ipython().run_cell_magic('sql', '', "DROP TABLE IF EXISTS eventlog CASCADE; -- Use CASCADE because views created below depend on this table\n\nCREATE TABLE eventlog (event_timestamp TIMESTAMP,\n            user_id INT,\n            page TEXT,\n            revenue FLOAT);\n\nINSERT INTO eventlog VALUES\n('04/15/2015 02:19:00', 101331, 'CHECKOUT', 16),\n('04/15/2015 02:17:00', 202201, 'WINE', 0),\n('04/15/2015 03:18:00', 202201, 'BEER', 0),\n('04/15/2015 01:03:00', 100821, 'LANDING', 0),\n('04/15/2015 01:04:00', 100821, 'WINE', 0),\n('04/15/2015 01:05:00', 100821, 'CHECKOUT', 39),\n('04/15/2015 02:06:00', 100821, 'WINE', 0),\n('04/15/2015 02:09:00', 100821, 'WINE', 0),\n('04/15/2015 02:15:00', 101331, 'LANDING', 0),\n('04/15/2015 02:16:00', 101331, 'WINE', 0),\n('04/15/2015 02:17:00', 101331, 'HELP', 0),\n('04/15/2015 02:18:00', 101331, 'WINE', 0),\n('04/15/2015 02:29:00', 201881, 'LANDING', 0),\n('04/15/2015 02:30:00', 201881, 'BEER', 0),\n('04/15/2015 01:05:00', 202201, 'LANDING', 0),\n('04/15/2015 01:06:00', 202201, 'HELP', 0),\n('04/15/2015 01:09:00', 202201, 'LANDING', 0),\n('04/15/2015 02:15:00', 202201, 'WINE', 0),\n('04/15/2015 02:16:00', 202201, 'BEER', 0),\n('04/15/2015 03:19:00', 202201, 'WINE', 0),\n('04/15/2015 03:22:00', 202201, 'CHECKOUT', 21);\n\nSELECT * FROM eventlog ORDER BY event_timestamp;")
+
+get_ipython().run_cell_magic('sql', '', "DROP VIEW IF EXISTS sessionize_output_view;\n\n SELECT madlib.sessionize(\n     'eventlog',             -- Name of input table\n     'sessionize_output_view',   -- View to store sessionize results\n      'user_id',             -- Partition input table by user id\n     'event_timestamp',      -- Time column used to compute sessions\n     '0:30:0'                -- Time out used to define a session (30 minutes)\n    );\n    \nSELECT * FROM sessionize_output_view ORDER BY user_id, event_timestamp;")
+
+get_ipython().run_cell_magic('sql', '', 'DROP TABLE IF EXISTS sessionize_output_table;\n\n SELECT madlib.sessionize(\n     \'eventlog\',                    -- Name of input table\n     \'sessionize_output_table\',     -- Table to store sessionize results\n     \'user_id < 200000\',            -- Partition input table by subset of users\n     \'event_timestamp\',             -- Order partitions in input table by time\n     \'180\',                         -- Use 180 second time out to define sessions\n                                    -- Note that this is the same as \'0:03:0\'\n     \'event_timestamp, user_id, user_id < 200000 AS "Department-A1"\',    -- Select only user_id and event_timestamp columns, along with the session id as output\n     \'f\'                            -- create a table\n     );\n    \n    SELECT * FROM sessionize_output_table WHERE "Department-A1"=\'TRUE\' ORDER BY event_timestamp;')
+
+
+

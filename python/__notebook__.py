@@ -1,0 +1,258 @@
+import pandas as pd
+import numpy as np
+import operator
+
+# reading data
+
+# directory = 'instacart_2017_05_01/'
+directory = '/home/rs5788/instacart/'
+
+print('Loading prior orders')
+prior_orders = pd.read_csv(directory + 'order_products__prior.csv', dtype={
+        'order_id': np.int32,
+        'product_id': np.int32,
+        'add_to_cart_order': np.int16,
+        'reordered': np.int8})
+
+print('Loading orders')
+orders = pd.read_csv(directory + 'orders.csv', dtype={
+        'order_id': np.int32,
+        'user_id': np.int32,
+        'eval_set': 'category',
+        'order_number': np.int16,
+        'order_dow': np.int8,
+        'order_hour_of_day': np.int8,
+        'days_since_prior_order': np.float32})
+
+print('Loading aisles info')
+aisles = pd.read_csv(directory + 'products.csv', engine='c',
+                           usecols = ['product_id','aisle_id'],
+                       dtype={'product_id': np.int32, 'aisle_id': np.int32})
+
+pd.set_option('display.float_format', lambda x: '%.3f' % x)
+
+print("\n Checking the loaded CSVs")
+print("Prior orders:", prior_orders.shape)
+print("Orders", orders.shape)
+print("Aisles:", aisles.shape)
+
+prior_orders.head()
+
+orders.head()
+
+aisles.head()
+
+# removing all user_ids not in the test set from both files to save memory
+# the test users present ample data to make models. (and saves space)
+
+test  = orders[orders['eval_set'] == 'test' ]
+user_ids = test['user_id'].values
+orders = orders[orders['user_id'].isin(user_ids)]
+
+test.shape
+
+# Calculate the Prior : p(reordered|product_id)
+
+prior = pd.DataFrame(prior_orders.groupby('product_id')['reordered']                          .agg([('number_of_orders',len),('sum_of_reorders','sum')]))
+
+prior['prior_p'] = (prior['sum_of_reorders']+1)/(prior['number_of_orders']+2) # Informed Prior
+# prior['prior_p'] = 1/2  # Flat Prior
+# prior.drop(['number_of_orders','sum_of_reorders'], axis=1, inplace=True)
+
+print('Here is The Prior: our first guess of how probable it is that a product be reordered once it has been ordered.')
+prior.head()
+
+# merge everything into one dataframe and save any memory space
+
+comb = pd.DataFrame()
+comb = pd.merge(prior_orders, orders, on='order_id', how='right')
+
+# slim down comb - 
+comb.drop(['eval_set','order_dow','order_hour_of_day'], axis=1, inplace=True)
+del prior_orders
+del orders
+
+comb = pd.merge(comb, aisles, on ='product_id', how = 'left')
+del aisles
+
+prior.reset_index(inplace = True)
+comb = pd.merge(comb, prior, on ='product_id', how = 'left')
+del prior
+
+print('combined data in DataFrame comb')
+comb.head()
+
+recount = pd.DataFrame()
+recount['reorder_c'] = comb.groupby(comb.order_id)['reordered'].sum().fillna(0)
+bins = [-0.1, 0, 2,4,6,8,11,14,19,71]
+cat =  ['None','<=2','<=4','<=6','<=8','<=11','<=14','<=19','>19']
+recount['reorder_b'] = pd.cut(recount['reorder_c'], bins, labels = cat)
+recount.reset_index(inplace = True)
+
+comb = pd.merge(comb, recount, how = 'left', on = 'order_id')
+del recount
+comb.head(50)
+
+bins = [0,2,3,5,7,9,12,17,80]
+cat = ['<=2','<=3','<=5','<=7','<=9','<=12','<=17','>17']
+
+comb['atco1'] = pd.cut(comb['add_to_cart_order'], bins, labels = cat)
+del comb['add_to_cart_order']
+print('comb')
+comb.head(50)
+
+atco_fac = pd.DataFrame()
+atco_fac = comb.groupby(['reordered', 'atco1'])['atco1'].agg(np.count_nonzero).unstack('atco1')
+
+tot = pd.DataFrame()
+tot = np.sum(atco_fac,axis=1)
+
+atco_fac = atco_fac.iloc[:,:].div(tot, axis=0)
+atco_fac = atco_fac.stack('atco1')
+atco_fac = pd.DataFrame(atco_fac)
+atco_fac.reset_index(inplace = True)
+atco_fac.rename(columns = {0:'atco_fac_p'}, inplace = True)
+
+comb = pd.merge(comb, atco_fac, how='left', on=('reordered', 'atco1'))
+comb.head(50)
+
+aisle_fac = pd.DataFrame()
+aisle_fac = comb.groupby(['reordered', 'atco1', 'aisle_id'])['aisle_id']                .agg(np.count_nonzero).unstack('aisle_id')
+
+tot = np.sum(aisle_fac,axis=1)
+
+aisle_fac = aisle_fac.iloc[:,:].div(tot, axis=0)
+aisle_fac = aisle_fac.stack('aisle_id')
+aisle_fac = pd.DataFrame(aisle_fac)
+aisle_fac.reset_index(inplace = True)
+aisle_fac.rename(columns = {0:'aisle_fac_p'}, inplace = True)
+
+comb = pd.merge(comb, aisle_fac, how = 'left', on = ('aisle_id','reordered','atco1'))
+comb.head(50)
+
+
+recount_fac = pd.DataFrame()
+recount_fac = comb.groupby(['reordered', 'atco1', 'reorder_b'])['reorder_b']                 .agg(np.count_nonzero).unstack('reorder_b')
+
+tot = pd.DataFrame()
+tot = np.sum(recount_fac,axis=1)
+
+recount_fac = recount_fac.iloc[:,:].div(tot, axis=0)
+recount_fac.stack('reorder_b')
+recount_fac = pd.DataFrame(recount_fac.unstack('reordered').unstack('atco1')).reset_index()
+recount_fac.rename(columns = {0:'recount_fac_p'}, inplace = True)
+
+comb = pd.merge(comb, recount_fac, how = 'left', on = ('reorder_b', 'reordered', 'atco1'))
+recount_fac.head(50)
+
+p = pd.DataFrame()
+p = (comb.loc[:,'atco_fac_p'] * comb.loc[:,'aisle_fac_p'] * comb.loc[:,'recount_fac_p'])
+p.reset_index()
+comb['p'] = p
+
+comb.head(30)
+
+
+# Calculate bf0 for products when first purchased aka reordered=0
+comb0 = pd.DataFrame()
+comb0 = comb[comb['reordered']==0]
+comb0.loc[:,'first_order'] = comb0['order_number']
+# now every product that was ordered has a posterior in usr.
+comb0.loc[:,'beta'] = 1
+comb0.loc[:,'bf'] = (comb0.loc[:,'prior_p'] * comb0.loc[:,'p']/(1 - comb0.loc[:,'p'])) # bf1
+# Small 'slight of hand' here. comb0.bf is really the first posterior and second prior.
+
+# Calculate beta and BF1 for the reordered products
+comb1 = pd.DataFrame()
+comb1 = comb[comb['reordered']==1]
+
+comb1.loc[:,'beta'] = (1 - .05*comb1.loc[:,'days_since_prior_order']/30)
+comb1.loc[:,'bf'] = (1 - comb1.loc[:,'p'])/comb1.loc[:,'p'] # bf0
+
+
+comb_last = pd.DataFrame()
+comb_last = pd.concat([comb0, comb1], axis=0).reset_index(drop=True)
+
+comb_last = comb_last[['reordered', 'user_id', 'order_id', 'product_id','reorder_c','order_number',
+                       'bf','beta','atco_fac_p', 'aisle_fac_p', 'recount_fac_p']]
+comb_last = comb_last.sort_values((['user_id', 'order_number', 'bf']))
+
+pd.set_option('display.float_format', lambda x: '%.6f' % x)
+comb_last.head()
+
+first_order = pd.DataFrame()
+first_order = comb_last[comb_last.reordered == 0]
+first_order.rename(columns = {'order_number':'first_o'}, inplace = True)
+first_order.loc[:,'last_o'] = comb_last.groupby(['user_id'])['order_number'].transform(max)
+first_order = first_order[['user_id','product_id','first_o','last_o']]
+
+comb_last = pd.merge(comb_last, first_order, on = ('user_id', 'product_id'), how = 'left')
+comb_last.head()
+
+#com = pd.DataFrame()
+#com = comb_last[(comb_last.user_id == 3) & (comb_last.first_o < comb_last.order_number)]
+#com.groupby([('order_id', 'product_id', 'order_number')])['bf'].agg(np.sum).head(50)
+
+temp = pd.pivot_table(comb_last[(comb_last.user_id == 3) & (comb_last.first_o == comb_last.order_number)],
+                     values = 'bf', index = ['user_id', 'product_id'],
+                     columns = 'order_number', dropna=False)
+temp.head(10)
+
+temp = temp.fillna(method='pad', axis=1).fillna(1)
+temp.head(10)
+
+pd.pivot_table(comb_last[comb_last.first_o <= comb_last.order_number],
+                              values = 'bf', index = ['user_id', 'product_id'],
+                              columns = 'order_number').head(10)
+
+temp.update(pd.pivot_table(comb_last[comb_last.first_o <= comb_last.order_number],
+                              values = 'bf', index = ['user_id', 'product_id'],
+                              columns = 'order_number'))
+temp.head(10)
+
+import logging
+logging.basicConfig(filename='bayes.log',level=logging.DEBUG)
+logging.debug("Started Posterior calculations")
+print("Started Posterior calculations")
+
+pred = pd.DataFrame(columns=['user_id', 'product_id'])
+# comb_last_temp = pd.DataFrame()
+# com = pd.DataFrame()
+
+for uid in comb_last.user_id.unique():
+    if uid % 1000 == 0:
+        print("Posterior calculated until user %d" % uid)
+        logging.debug("Posterior calculated until user %d" % uid)
+    
+#     del comb_last_temp
+    comb_last_temp = pd.DataFrame()
+    comb_last_temp = comb_last[comb_last['user_id'] == uid].reset_index()
+    
+#     del com
+    com = pd.DataFrame()
+    com = pd.pivot_table(comb_last_temp[comb_last_temp.first_o == comb_last_temp.order_number],
+                         values = 'bf', index = ['user_id', 'product_id'],
+                         columns = 'order_number', dropna=False)
+    com = com.fillna(method='pad', axis=1).fillna(1)
+    com.update(pd.pivot_table(comb_last_temp[comb_last_temp.first_o <= comb_last_temp.order_number],
+                              values = 'bf', index = ['user_id', 'product_id'],
+                              columns = 'order_number'))
+
+    com.reset_index(inplace=True)
+    com['posterior'] = com.product(axis=1)
+    
+    pred = pred.append(com.sort_values(by=['posterior'], ascending=False).head(10)                           .groupby('user_id')['product_id'].apply(list).reset_index())    
+
+print("Posterior calculated for all users")
+logging.debug("Posterior calculated for all users")
+pred = pred.rename(columns={'product_id': 'products'})
+pred.head()
+
+pred = pred.merge(test, on='user_id', how='left')[['order_id', 'products']]
+pred['products'] = pred['products'].apply(lambda x: [int(i) for i in x])                        .astype(str).apply(lambda x: x.strip('[]').replace(',', ''))
+pred.head()
+
+pred.to_csv('predictions.csv', index=False)
+
+
+

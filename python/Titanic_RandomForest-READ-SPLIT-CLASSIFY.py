@@ -1,0 +1,151 @@
+from sml import execute
+
+query = query = 'READ "../data/titanic.csv" (separator = ",", header = 0) AND REPLACE ("NaN", "mode") AND SPLIT (train = .8, test = 0.2) AND CLASSIFY (predictors = [1,3,4,5,6,7,8,9,10,11,12], label = 2, algorithm = forest)'
+
+execute(query, verbose=True)
+
+# Libraries required for ML
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn import cross_validation, metrics
+from sklearn.svm import SVC
+from sklearn.naive_bayes import GaussianNB,MultinomialNB
+from sklearn.cross_validation import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+import numpy as np
+
+
+
+# Encoders/Imputers 
+import pandas as pd
+import seaborn as sns
+from sklearn.preprocessing import Imputer
+from sklearn.base import BaseEstimator, TransformerMixin
+
+f = pd.read_csv("../data/titanic.csv", sep = ",", header = 0)
+f.head()
+
+"""
+impute_missing()
+Parameters:
+  data: Dataframe to impute missing values on
+  columns: Columns to impute. If None, impute all columns
+  impute_strategy: What to replace missing values with
+     Options: 
+      Imputer Class
+      'most frequent'
+      'median'
+      'mean'
+      Custom Functions
+      'remove'
+      'dummy'
+      'rand_forest_reg'
+Returns: Imputed dataframe
+"""
+def impute_missing(data, columns=None, impute_strategy='mode', missing_values='NaN'):
+  datacopy = data
+  dummy_val = 'U0'
+  cols_to_impute = list()
+  if columns == None:
+    cols_to_impute = _find_cols_with_missing_vals(data, missing_values)
+  else:
+    cols_to_impute = columns
+  if impute_strategy == 'mode':
+    for col in cols_to_impute:
+      modeVal = data[col].mode()
+      datacopy[col] = data[col].fillna(modeVal[0])
+    return datacopy
+  elif impute_strategy == 'mean':
+    for col in cols_to_impute:
+      meanVal = data[col].mean()
+      datacopy[col] = data[col].fillna(meanVal)
+    return datacopy
+  elif impute_strategy == 'median':
+    for col in cols_to_impute:
+      medianVal = data[col].median()
+      datacopy[col] = data[col].fillna(medianVal)
+    return datacopy
+  elif impute_strategy == 'drop column':
+    return _remove_columns(data, cols_to_impute)
+  elif impute_strategy == 'maximum':
+    for col in cols_to_impute:
+      maxVal = max(data[col])
+      datacopy[col] = data[col].fillna(maxVal)
+    return data
+  elif impute_strategy == 'minimum':
+    for col in cols_to_impute:
+      minVal = min(data[col])
+      datacopy[col] = data[col].fillna(minVal)
+    return data
+  elif impute_strategy == 'dummy':
+    return data.replace(missing_values, dummy_val) 
+  # Do some more research on this before implementing
+  elif impute_strategy == 'rand_forest_reg':
+    print("RANDOM FOREST REGRESSOR NOT IMPLEMENTED NO IMPUTATION HAPPENED")
+    return None
+  else:
+    print ("REPLACE COMMAND NOT RECOGNIZED")
+    return None
+
+"""
+remove_columns()
+Parameters:
+  data: dataframe to remove columns
+  delete_list: list of names of columns to delete
+Returns:
+  Dataframe with deleted columns 
+"""
+def _remove_columns(data, delete_list):
+  for col in delete_list:
+      del data[col]
+  return data
+
+def _find_cols_with_missing_vals(data= None, missing_values= 'NaN'):
+  cols_to_impute = list()
+  if missing_values == 'NaN':
+    for col in f.columns:
+      if(data[col].isnull().values.any()):
+        cols_to_impute.append(col)
+  else:
+    for col in f.columns:
+      if missing_values in data[col]:
+        cols_to_impute.append(col)
+  return cols_to_impute
+
+
+f_imputed = impute_missing(f)
+f_imputed.head()
+
+def encode_categorical(df):
+    categorical = list()
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            categorical.append(col)
+    for feature in categorical:
+        l = list(df[feature])
+        s = set(l)
+        l2 = list(s)
+        numbers = list()
+        for i in range(0,len(l2)):
+            numbers.append(i)
+        df[feature] = df[feature].replace(l2, numbers)
+    return df
+
+f_encoded = encode_categorical(f_imputed)
+
+#Seperate features/labels
+labels = f_encoded['Survived']
+features = f_encoded.drop('Survived',1)
+
+rand_forest = RandomForestClassifier(n_estimators=100)
+rand_forest_scores = cross_validation.cross_val_score(rand_forest, 
+                                                      features,
+                                                      labels,
+                                                      cv=10,
+                                                      scoring='accuracy')
+
+rand_forest_scores.mean()
+
+
+
